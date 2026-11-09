@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web SSH Desktop Client</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@300;400;500;600&display=swap');
+        body { font-family: 'Inter', sans-serif; overflow: hidden; }
+        .terminal-font { font-family: 'Fira Code', monospace; }
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #1e1e2e; }
+        ::-webkit-scrollbar-thumb { background: #45475a; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #585b70; }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 h-screen flex flex-col select-none">
+    <header class="h-9 bg-slate-900 border-b border-slate-800 flex items-center justify-between px-3 select-none">
+        <div class="flex items-center space-x-2">
+            <div class="flex space-x-1.5">
+                <div class="w-3 h-3 rounded-full bg-rose-500 hover:opacity-80 cursor-pointer" title="Close"></div>
+                <div class="w-3 h-3 rounded-full bg-amber-500 hover:opacity-80 cursor-pointer" title="Minimize"></div>
+                <div class="w-3 h-3 rounded-full bg-emerald-500 hover:opacity-80 cursor-pointer" title="Maximize"></div>
+            </div>
+            <span class="text-xs font-medium text-slate-400 ml-2 border-l border-slate-700 pl-2">SSH Client Desktop v1.2</span>
+        </div>
+        <div class="flex items-center space-x-4 text-xs text-slate-400">
+            <span id="status-indicator"><i class="fa-solid fa-circle text-emerald-500 text-[8px] mr-1"></i> Ready</span>
+        </div>
+    </header>
+    <div class="flex-1 flex overflow-hidden">
+        <aside class="w-72 bg-slate-900/90 border-r border-slate-800 flex flex-col">
+            <div class="p-3 border-b border-slate-800 flex items-center justify-between">
+                <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Saved Sessions</span>
+                <button onclick="openNewConnectionModal()" class="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-2 py-1 rounded transition flex items-center gap-1">
+                    <i class="fa-solid fa-plus text-[10px]"></i> Add
+                </button>
+            </div>
+            <div id="ssh-list" class="flex-1 overflow-y-auto p-2 space-y-1"></div>
+            <div class="p-3 border-t border-slate-800 text-xs text-slate-500 flex justify-between items-center">
+                <span>Total: <span id="total-sessions">0</span> hosts</span>
+                <i class="fa-solid fa-shield-halved text-slate-600"></i>
+            </div>
+        </aside>
+        <main class="flex-1 flex flex-col bg-slate-950 overflow-hidden">
+            <div id="tab-bar" class="h-10 bg-slate-900 border-b border-slate-800 flex items-center px-2 space-x-1 overflow-x-auto"></div>
+            <div id="viewport-container" class="flex-1 relative overflow-hidden bg-black">
+                <div id="welcome-screen" class="absolute inset-0 flex flex-col items-center justify-center text-center p-6 text-slate-500">
+                    <div class="w-16 h-16 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-center text-indigo-400 text-2xl mb-4 shadow-lg">
+                        <i class="fa-solid fa-terminal"></i>
+                    </div>
+                    <h2 class="text-lg font-medium text-slate-300 mb-1">No Active SSH Session</h2>
+                    <p class="text-xs max-w-sm text-slate-500 mb-4">Select a saved server profile from the left sidebar or click Connect to open a secure shell session in a new tab.</p>
+                </div>
+            </div>
+        </main>
+    </div>
+    <div id="auth-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm hidden items-center justify-center z-50 opacity-0 transition-opacity duration-200">
+        <div id="modal-content" class="bg-slate-900 border border-slate-800 rounded-xl w-96 p-6 shadow-2xl transform scale-95 transition-transform duration-200">
+            <h3 id="modal-title" class="text-sm font-semibold text-slate-200 mb-4 flex items-center gap-2">
+                <i class="fa-solid fa-lock text-indigo-400"></i> Authentication Required
+            </h3>
+            <div id="modal-body" class="space-y-4"></div>
+        </div>
+    </div>
+    <script>
+        let sshProfiles = [
+            { id: "1", name: "Production Web Server", host: "192.168.1.50", port: 22, user: "root", authType: "password" },
+            { id: "2", name: "Staging API Gateway", host: "api.staging.internal", port: 2222, user: "ubuntu", authType: "password" },
+            { id: "3", name: "Database Replica Node", host: "10.0.0.14", port: 22, user: "postgres", authType: "password" }
+        ];
+        let activeTabs = [];
+        let activeTabId = null;
+        function renderSSHList() {
+            const listEl = document.getElementById('ssh-list');
+            document.getElementById('total-sessions').innerText = sshProfiles.length;
+            listEl.innerHTML = '';
+            if (sshProfiles.length === 0) {
+                listEl.innerHTML = `<div class="p-3 text-xs text-slate-500 text-center">No saved sessions</div>`;
+                return;
+            }
+            sshProfiles.forEach(profile => {
+                const item = document.createElement('div');
+                item.className = "group flex items-center justify-between p-2.5 rounded-lg hover:bg-slate-800/60 transition cursor-pointer border border-transparent hover:border-slate-700";
+                item.innerHTML = `
+                    <div class="flex items-center space-x-3 overflow-hidden" onclick="initiateConnect('${profile.id}')">
+                        <div class="w-8 h-8 rounded-lg bg-indigo-950 text-indigo-400 flex items-center justify-center shrink-0 border border-indigo-900/50">
+                            <i class="fa-solid fa-server text-xs"></i>
+                        </div>
+                        <div class="truncate">
+                            <div class="text-xs font-medium text-slate-200 truncate">${escapeHtml(profile.name)}</div>
+                            <div class="text-[10px] text-slate-500 truncate">${escapeHtml(profile.user)}@${escapeHtml(profile.host)}:${profile.port}</div>
+                        </div>
+                    </div>
+                    <div class="flex items-center space-x-1">
+                        <button onclick="event.stopPropagation(); initiateConnect('${profile.id}')" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-2 py-1 rounded transition">Connect</button>
+                        <button onclick="event.stopPropagation(); deleteProfile('${profile.id}')" class="text-slate-500 hover:text-rose-400 p-1 hover:bg-rose-900/20 rounded" title="Delete"><i class="fa-solid fa-trash text-[10px]"></i></button>
+                    </div>
+                `;
+                listEl.appendChild(item);
+            });
+        }
+        function deleteProfile(id) {
+            if (!confirm('Delete this SSH profile?')) return;
+            sshProfiles = sshProfiles.filter(p => p.id !== id);
+            renderSSHList();
+        }
+        function openModal() {
+            const modal = document.getElementById('auth-modal');
+            modal.classList.remove('hidden');
+            requestAnimationFrame(() => {
+                modal.classList.remove('opacity-0');
+                const content = document.getElementById('modal-content');
+                content.classList.remove('scale-95');
+                content.classList.add('scale-100');
+            });
+        }
+        function closeModal() {
+            const modal = document.getElementById('auth-modal');
+            const content = document.getElementById('modal-content');
+            modal.classList.add('opacity-0');
+            content.classList.remove('scale-100');
+            content.classList.add('scale-95');
+            setTimeout(() => { modal.classList.add('hidden'); }, 200);
+        }
+        document.getElementById('auth-modal').addEventListener('click', function(e) {
+            if (e.target === this) closeModal();
+        });
+        function initiateConnect(profileId) {
+            const profile = sshProfiles.find(p => p.id === profileId);
+            if (!profile) return;
+            document.getElementById('modal-title').innerHTML = `<i class="fa-solid fa-lock text-indigo-400"></i> Connect to ${escapeHtml(profile.name)}`;
+            const modalBody = document.getElementById('modal-body');
+            modalBody.innerHTML = `
+                <div class="space-y-3">
+                    <div>
+                        <label class="text-[11px] text-slate-400 block mb-1">Target Host</label>
+                        <input type="text" disabled value="${escapeHtml(profile.user)}@${escapeHtml(profile.host)}:${profile.port}" class="w-full bg-slate-950 border border-slate-800 rounded px-3 py-1.5 text-xs text-slate-400">
+                    </div>
+                    <div>
+                        <label class="text-[11px] text-slate-400 block mb-1">Password / Passphrase</label>
+                        <input id="ssh-pass-input" type="password" placeholder="Enter SSH password..." class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                    </div>
+                    <div class="flex justify-end space-x-2 pt-2">
+                        <button onclick="closeModal()" class="px-3 py-1.5 rounded text-xs bg-slate-800 hover:bg-slate-700 text-slate-300">Cancel</button>
+                        <button onclick="executeConnect('${profile.id}')" class="px-3 py-1.5 rounded text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-medium">Authenticate &amp; Connect</button>
+                    </div>
+                </div>
+            `;
+            openModal();
+            setTimeout(() => { const input = document.getElementById('ssh-pass-input'); if (input) input.focus(); }, 100);
+        }
+        function executeConnect(profileId) {
+            const profile = sshProfiles.find(p => p.id === profileId);
+            if (!profile) return;
+            closeModal();
+            const tabId = 'tab_' + Date.now();
+            const newTab = { id: tabId, profile: profile, outputLines: [] };
+            activeTabs.push(newTab);
+            switchTab(tabId);
+        }
+        function renderTabs() {
+            const tabBar = document.getElementById('tab-bar');
+            tabBar.innerHTML = '';
+            const welcome = document.getElementById('welcome-screen');
+            if (activeTabs.length === 0) { welcome.classList.remove('hidden'); return; }
+            else { welcome.classList.add('hidden'); }
+            activeTabs.forEach(tab => {
+                const isActive = tab.id === activeTabId;
+                const tabEl = document.createElement('div');
+                tabEl.className = `flex items-center space-x-2 px-3 py-1.5 rounded-t-md text-xs cursor-pointer border-b-2 transition ${isActive ? 'bg-slate-950 border-indigo-500 text-slate-200' : 'bg-slate-900/60 border-transparent text-slate-400 hover:bg-slate-800 border-b-2 border-transparent mb-[-2px]'}`;
+                tabEl.onclick = () => switchTab(tab.id);
+                tabEl.innerHTML = `
+                    <i class="fa-solid fa-terminal text-[10px] text-indigo-400"></i>
+                    <span class="font-medium truncate max-w-[120px]">${escapeHtml(tab.profile.name)}</span>
+                    <button onclick="event.stopPropagation(); closeTab('${tab.id}')" class="ml-1 hover:bg-slate-700/50 p-0.5 rounded text-slate-500 hover:text-slate-200" title="Close tab"><i class="fa-solid fa-xmark text-[9px]"></i></button>
+                `;
+                tabBar.appendChild(tabEl);
+            });
+        }
+        function switchTab(tabId) {
+            activeTabId = tabId;
+            renderTabs();
+            renderViewport();
+        }
+        function renderViewport() {
+            const container = document.getElementById('viewport-container');
+            const welcome = document.getElementById('welcome-screen');
+            Array.from(container.children).forEach(child => { if (child.id !== 'welcome-screen') child.remove(); });
+            if (activeTabs.length === 0) { welcome.classList.remove('hidden'); return; }
+            else { welcome.classList.add('hidden'); }
+            const activeTab = activeTabs.find(t => t.id === activeTabId);
+            if (!activeTab) return;
+            const viewEl = document.createElement('div');
+            viewEl.id = `view_${activeTab.id}`;
+            viewEl.className = "absolute inset-0 flex flex-col bg-slate-950 terminal-font text-xs p-4 overflow-y-auto";
+            viewEl.innerHTML = `
+                <div class="flex-1 space-y-1 min-h-0" id="logs_${activeTab.id}">${activeTab.outputLines.join('')}</div>
+                <div class="flex items-center space-x-2 mt-2 pt-2 border-t border-slate-900 flex-shrink-0">
+                    <span class="text-indigo-400 shrink-0 whitespace-nowrap">${escapeHtml(activeTab.profile.user)}@${escapeHtml(activeTab.profile.host)}:~$</span>
+                    <input type="text" id="cmd_input_${activeTab.id}" onkeydown="handleCommandKey(event, '${activeTab.id}')" class="flex-1 bg-transparent text-slate-200 focus:outline-none terminal-font text-xs" autocomplete="off" spellcheck="false">
+                </div>
+            `;
+            container.appendChild(viewEl);
+            viewEl.scrollTop = viewEl.scrollHeight;
+            const input = document.getElementById(`cmd_input_${activeTab.id}`);
+            if (input) input.focus();
+        }
+        function appendTerminalOutput(tabId, htmlContent) {
+            const tab = activeTabs.find(t => t.id === tabId);
+            if (!tab) return;
+            tab.outputLines.push(`<div>${htmlContent}</div>`);
+            if (tabId === activeTabId) {
+                const logsEl = document.getElementById(`logs_${tabId}`);
+                if (logsEl) {
+                    logsEl.innerHTML = tab.outputLines.join('');
+                    logsEl.parentElement.scrollTop = logsEl.parentElement.scrollHeight;
+                }
+            }
+        }
+        function handleCommandKey(event, tabId) {
+            if (event.key === 'Enter') {
+                const input = event.target;
+                const cmd = input.value.trim();
+                const tab = activeTabs.find(t => t.id === tabId);
+                if (!tab) return;
+                appendTerminalOutput(tabId, `<span class="text-indigo-400">${escapeHtml(tab.profile.user)}@${escapeHtml(tab.profile.host)}:~$</span> <span class="text-slate-100">${escapeHtml(cmd)}</span>`);
+                input.value = '';
+                if (cmd === '') return;
+                if (cmd === 'clear') { tab.outputLines = []; renderViewport(); return; }
+                if (cmd === 'help') {
+                    setTimeout(() => { appendTerminalOutput(tabId, `<div class="text-slate-300">Available commands: ls, uptime, uname -a, cat <file>, whoami, pwd, clear, help, exit</div>`); }, 100);
+                    return;
+                }
+                if (cmd === 'exit') { closeTab(tabId); return; }
+                setTimeout(() => { const response = simulateCommand(cmd, tab.profile); if (response) appendTerminalOutput(tabId, response); }, 150);
+            }
+        }
+        function simulateCommand(cmd, profile) {
+            if (!cmd) return '';
+            const lower = cmd.toLowerCase();
+            if (lower === 'ls' || lower === 'ls -la') {
+                return `<div class="text-slate-300">total 32<br>drwxr-xr-x  5 root root 4096 Nov  9 08:00 <span class="text-blue-400 font-semibold">.</span><br>drwxr-xr-x 20 root root 4096 Nov  9 08:00 <span class="text-blue-400 font-semibold">..</span><br>-rw-r--r--  1 root root  220 Nov  9 08:00 .bashrc<br>drwxr-xr-x  2 root root 4096 Nov  9 08:00 <span class="text-blue-400 font-semibold">app</span><br>-rw-r--r--  1 root root  807 Nov  9 08:00 package.json</div>`;
+            } else if (lower === 'uptime') {
+                return `<div class="text-slate-300"> 08:59:00 up 45 days, 3:12,  2 users,  load average: 0.12, 0.08, 0.05</div>`;
+            } else if (lower === 'uname -a') {
+                return `<div class="text-slate-300">Linux ${escapeHtml(profile.host)} 5.15.0-88-generic #98-Ubuntu SMP Mon Oct 2 15:18:56 UTC 2023 x86_64 x86_64 x86_64 GNU/Linux</div>`;
+            } else if (lower.startsWith('cat ')) {
+                return `<div class="text-slate-300"># Configuration file for ${escapeHtml(profile.name)}<br>PORT=8080<br>NODE_ENV=production<br>DB_HOST=localhost</div>`;
+            } else if (lower === 'whoami') {
+                return `<div class="text-slate-300">${escapeHtml(profile.user)}</div>`;
+            } else if (lower === 'pwd') {
+                return `<div class="text-slate-300">/home/${escapeHtml(profile.user)}</div>`;
+            } else {
+                return `<div class="text-rose-400">bash: ${escapeHtml(cmd)}: command not found</div>`;
+            }
+        }
+        function escapeHtml(text) {
+            if (text === null || text === undefined) return '';
+            return String(text).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+        }
+        function closeTab(tabId) {
+            activeTabs = activeTabs.filter(t => t.id !== tabId);
+            if (activeTabId === tabId) {
+                activeTabId = activeTabs.length > 0 ? activeTabs[activeTabs.length - 1].id : null;
+            }
+            renderTabs();
+            renderViewport();
+        }
+        function openNewConnectionModal() {
+            document.getElementById('modal-title').innerHTML = `<i class="fa-solid fa-plus text-indigo-400"></i> Add New SSH Profile`;
+            const modalBody = document.getElementById('modal-body');
+            modalBody.innerHTML = `
+                <div class="space-y-3">
+                    <div>
+                        <label class="text-[11px] text-slate-400 block mb-1">Profile Name</label>
+                        <input id="new-name" type="text" placeholder="e.g. Production Web" class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                    </div>
+                    <div>
+                        <label class="text-[11px] text-slate-400 block mb-1">Host</label>
+                        <input id="new-host" type="text" placeholder="e.g. 192.168.1.50" class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                    </div>
+                    <div class="grid grid-cols-2 gap-3">
+                        <div>
+                            <label class="text-[11px] text-slate-400 block mb-1">Port</label>
+                            <input id="new-port" type="number" value="22" class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                        </div>
+                        <div>
+                            <label class="text-[11px] text-slate-400 block mb-1">Username</label>
+                            <input id="new-user" type="text" placeholder="root" class="w-full bg-slate-950 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500">
+                        </div>
+                    </div>
+                    <div class="flex justify-end space-x-2 pt-2">
+                        <button onclick="closeModal()" class="px-3 py-1.5 rounded text-xs bg-slate-800 hover:bg-slate-700 text-slate-300">Cancel</button>
+                        <button onclick="saveNewProfile()" class="px-3 py-1.5 rounded text-xs bg-indigo-600 hover:bg-indigo-500 text-white font-medium">Save Profile</button>
+                    </div>
+                </div>
+            `;
+            openModal();
+            setTimeout(() => document.getElementById('new-name').focus(), 100);
+        }
+        function saveNewProfile() {
+            const name = document.getElementById('new-name').value.trim();
+            const host = document.getElementById('new-host').value.trim();
+            const port = parseInt(document.getElementById('new-port').value) || 22;
+            const user = document.getElementById('new-user').value.trim() || 'root';
+            if (!name || !host) { alert('Name and Host are required!'); return; }
+            const newProfile = { id: Date.now().toString(), name, host, port, user, authType: 'password' };
+            sshProfiles.push(newProfile);
+            closeModal();
+            renderSSHList();
+        }
+        renderSSHList();
+    </script>
+</body>
+</html>
