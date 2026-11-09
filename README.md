@@ -1,2 +1,2 @@
-# ss-utility
+# ssh-utility
 Maintain many ssh on one page
